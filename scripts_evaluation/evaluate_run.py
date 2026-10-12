@@ -1,18 +1,59 @@
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 import numpy as np
 from tqdm import tqdm
-from vllm import LLM, SamplingParams
 
 sys.path.append(str(Path(__file__).parent.parent))
+
+
+class SGLangJudge:
+    """Use the same judge prompts and sampling settings through a local server."""
+
+    def __init__(self, args):
+        from openai import OpenAI
+
+        self.args = args
+        self.client = OpenAI(
+            base_url=args.base_url,
+            api_key=os.getenv("OPENAI_API_KEY", "local-sglang"),
+            timeout=1800,
+            max_retries=0,
+        )
+
+    def chat(self, messages_list, sampling_params=None, *, chat_template_kwargs):
+        outputs = []
+        for messages in messages_list:
+            result = self.client.chat.completions.create(
+                model=self.args.model,
+                messages=messages,
+                temperature=self.args.temperature,
+                top_p=self.args.top_p,
+                max_tokens=self.args.max_output_tokens,
+                extra_body={
+                    "top_k": self.args.top_k,
+                    "chat_template_kwargs": chat_template_kwargs,
+                },
+            )
+            choice = result.choices[0]
+            if choice.finish_reason != "stop":
+                raise RuntimeError(f"Judge did not finish: {choice.finish_reason}")
+            outputs.append(
+                SimpleNamespace(
+                    outputs=[SimpleNamespace(text=choice.message.content or "")]
+                )
+            )
+        return outputs
+
 
 GRADER_TEMPLATE = """
 Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
@@ -394,6 +435,10 @@ def main():
         "--model", default="Qwen/Qwen3-32B", help="Qwen model for judging"
     )
     parser.add_argument(
+        "--base-url",
+        help="SGLang OpenAI-compatible URL, e.g. http://127.0.0.1:30001/v1; skips vLLM imports",
+    )
+    parser.add_argument(
         "--temperature", type=float, default=0.7, help="Decoding temperature"
     )
     parser.add_argument(
@@ -456,14 +501,19 @@ def main():
 
     all_results = []
 
-    # Initialize vLLM engine and sampling params
-    llm = LLM(model=args.model, tensor_parallel_size=args.tensor_parallel_size)
-    sampling_params = SamplingParams(
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        max_tokens=args.max_output_tokens,
-    )
+    if args.base_url:
+        llm = SGLangJudge(args)
+        sampling_params = None
+    else:
+        from vllm import LLM, SamplingParams
+
+        llm = LLM(model=args.model, tensor_parallel_size=args.tensor_parallel_size)
+        sampling_params = SamplingParams(
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            max_tokens=args.max_output_tokens,
+        )
 
     detected_model_name: Optional[str] = None
     first_run_path: Optional[Path] = json_files[0] if json_files else None
@@ -582,6 +632,9 @@ def main():
                 chat_template_kwargs={"enable_thinking": False},
             )
         except Exception as e:
+            if args.base_url:
+                # Do not silently omit failed requests from the score's denominator.
+                raise RuntimeError(f"SGLang judge batch {i} failed") from e
             print(f"Error running vLLM batch {i}//{args.batch_size}: {e}")
             continue
 

@@ -1,0 +1,3 @@
+# Add to the existing sglang-kv-evict environment; do not uv sync pyproject.toml.
+# Torch, Transformers, datasets, OpenAI, NumPy, and tokenizers come from SGLang.
+faiss-cpu==1.15.1

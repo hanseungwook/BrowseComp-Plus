@@ -226,3 +226,8 @@ If you find this work useful, please cite:
       journal={arXiv preprint arXiv:2508.06600}
 }
 ```
+
+## K2 Horizon on SGLang
+
+For the existing `sglang-kv-evict` environment with Qwen3-Embedding-8B retrieval,
+see [the Horizon setup and run instructions](docs/horizon_sglang.md).

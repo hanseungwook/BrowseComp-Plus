@@ -10,3 +10,8 @@ data/browsecomp_plus_decrypted.jsonl
 topics-qrels/queries.tsv
 runs/
 evals/
+# Local SGLang setup and downloaded corpus
+data/corpus/
+logs/
+.cache/
+scripts_sglang/*.local.json
